@@ -10,6 +10,7 @@ from market_dashboard.callbacks import register_callbacks as register_market_cal
 from portfolio_dashboard.callbacks import register_callbacks as register_portfolio_callbacks
 from portfolio_form.callbacks import register_callbacks as register_portfolio_form_callbacks
 from services.db import get_stocks_current_price, get_tickers
+import services.db as db
 
 def create_app() -> Dash:
     # Init Dash app with bootstrap theme
@@ -74,14 +75,17 @@ def create_app() -> Dash:
         prevent_initial_call=True,
     )
     def fetch_prices_on_load(_) -> Dict[str, float]:
+        conn = db.get_connection()
         try:
-            tickers = get_tickers()
+            tickers = db.get_tickers(conn)
             if not tickers:
                 return {}
-            prices = get_stocks_current_price(tickers)
+            prices = db.get_stocks_current_price(conn, tickers)
             return prices
         except Exception as e:
             return {"Error during fetch_prices_on_load": str(e)}
+        finally:
+            conn.close()
 
     register_market_callbacks(app)
     register_portfolio_callbacks(app)

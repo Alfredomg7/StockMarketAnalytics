@@ -2,6 +2,7 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 import components as cmp
 from services.db import get_tickers
+import services.db as db
 
 def create_layout() -> dbc.Container:
     title = html.H1('Market Dashboard', className='text-center display-4 text-light')
@@ -11,8 +12,13 @@ def create_layout() -> dbc.Container:
     )
 
     # Get options dictionaries for the select components
-    ticker_list = get_tickers()
-    ticker_options = [{'label': ticker, 'value': ticker} for ticker in ticker_list]
+    conn = db.get_connection() # Create a connection to the databases
+    try:
+        ticker_list = get_tickers(conn=conn)
+        ticker_options = [{'label': ticker, 'value': ticker} for ticker in ticker_list]
+    finally:
+        conn.close()
+
     volume_options = [
         {'label': 'All', 'value': 'all'},
         {'label': 'Very High (> 5M)', 'value': 'very_high'},
@@ -74,74 +80,115 @@ def create_layout() -> dbc.Container:
         class_name="mb-4 shadow-sm bg-dark text-light"
     )
 
-    price_over_time_chart = cmp.create_chart_container(
-        content_id={'type': 'dynamic-output-line', 'section': 'market'},
-        bg_color='dark',
-        loading_color=cmp.PRIMARY_COLOR
-    )
+    # Charts section
+    charts_section = dbc.Row([
+        # Line and Candlestick charts row
+        dbc.Row([
+            dbc.Col(
+                cmp.create_chart_container(
+                    content_id={'type': 'dynamic-output-line', 'section': 'market'},
+                    bg_color='dark',
+                    loading_color=cmp.PRIMARY_COLOR
+                ), 
+                xl=6, md=12, sm=12
+            ),
+            dbc.Col(
+                cmp.create_chart_container(
+                    content_id={'type': 'dynamic-output-candlestick', 'section': 'market'},
+                    bg_color='dark',
+                    loading_color=cmp.PRIMARY_COLOR
+                ), 
+                xl=6, md=12, sm=12
+            )
+        ], className='mb-4 align-items-stretch'),
+        
+        # Volume and Correlation charts row
+        dbc.Row([
+            dbc.Col(
+                cmp.create_chart_container(
+                    content_id={'type': 'dynamic-output-bar', 'section': 'market'},
+                    inputs=[
+                        dbc.Row([
+                            dbc.Col(
+                                cmp.create_label(
+                                    'Filter by Volume:', 
+                                    {'type': 'dynamic-select-volume', 'section': 'market'}
+                                ), 
+                                width=12
+                            )
+                        ]),
+                        dbc.Row([
+                            dbc.Col(
+                                cmp.create_select(
+                                    id={'type': 'dynamic-select-volume', 'section': 'market'},
+                                    options=volume_options,
+                                    value=volume_options[0]['value'],
+                                    placeholder='Select a volume range'
+                                ), 
+                                width=12
+                            )
+                        ])
+                    ],
+                    bg_color='dark',
+                    loading_color=cmp.PRIMARY_COLOR
+                ),
+                xl=6, md=12, sm=12
+            ),
+            dbc.Col(
+                cmp.create_chart_container(
+                    content_id={'type': 'dynamic-output-heatmap', 'section': 'market'},
+                    inputs=[
+                        dbc.Row([
+                            dbc.Col(
+                                cmp.create_label(
+                                    'Select Stocks for Correlation Analysis:', 
+                                    {'type': 'dynamic-select-corr', 'section': 'market'}
+                                ), 
+                                width=12
+                            )
+                        ]),
+                        dbc.Row([
+                            dbc.Col(
+                                cmp.create_multi_select(
+                                    id={'type': 'dynamic-select-corr', 'section': 'market'},
+                                    options=ticker_options,
+                                    value=[ticker_options[0]['value'], ticker_options[1]['value']],
+                                    placeholder='Select stocks'
+                                ), 
+                                width=12
+                            )
+                        ])
+                    ],
+                    bg_color='dark',
+                    loading_color=cmp.PRIMARY_COLOR
+                ),
+                xl=6, md=12, sm=12
+            )
+        ], className='align-items-stretch')
+    ])
 
-    candlestick_chart = cmp.create_chart_container(
-        content_id={'type': 'dynamic-output-candlestick', 'section': 'market'},
-        bg_color='dark',
-        loading_color=cmp.PRIMARY_COLOR
-    )
-
-    volume_filter_chart_group = cmp.create_chart_container(
-        content_id={'type': 'dynamic-output-bar', 'section': 'market'},
-        inputs=[
-            dbc.Row([dbc.Col(cmp.create_label('Filter by Volume:', {'type': 'dynamic-select-volume', 'section': 'market'}), width=12)]),
-            dbc.Row([dbc.Col(cmp.create_select(
-                id={'type': 'dynamic-select-volume', 'section': 'market'},
-                options=volume_options,
-                value=volume_options[0]['value'],
-                placeholder='Select a volume range'
-            ), width=12)])
-        ],
-        bg_color='dark',
-        loading_color=cmp.PRIMARY_COLOR
-    )
-
-
-    tickers_filter_group = cmp.create_chart_container(
-        content_id={'type': 'dynamic-output-heatmap', 'section': 'market'},
-        inputs=[
-            dbc.Row([dbc.Col(cmp.create_label(
-                'Select Stocks for Correlation Analysis:', {'type': 'dynamic-select-corr', 'section': 'market'}), width=12)]),
-            dbc.Row([dbc.Col(cmp.create_multi_select(
-                id={'type': 'dynamic-select-corr', 'section': 'market'},
-                options=ticker_options,
-                value=[ticker_options[0]['value'], ticker_options[1]['value']],
-                placeholder='Select stocks'
-            ), width=12)])
-        ],
-        bg_color='dark',
-        loading_color=cmp.PRIMARY_COLOR
-    )
-    
+    # Main layout
     layout = dbc.Container([
-        # Hidden store for time period
-        dcc.Store(id={'type': 'time-period-store', 'section': 'market'}, data='1 month'),
+        # Store components
+        dcc.Store(
+            id={'type': 'time-period-store', 'section': 'market'}, 
+            data='1 month'  # Valor inicial
+        ),
 
-        # Header
+        # Header section
         dbc.Row([dbc.Col(title, width=12)], class_name='mt-2 mb-2 text-center'),
         dbc.Row([dbc.Col(description, width=12)], class_name='mb-2 text-center'),
         html.Hr(className='mb-4'),
 
-        # Top section
+        # Filters and navigation section
         dbc.Row([
             dbc.Col(general_filters_group, md=12, lg=10, xl=8),
             dbc.Col(navigation_buttons_group, md=12, lg=10, xl=4)
         ], class_name='mb-4 justify-content-center'),
 
         # Charts section
-        dbc.Row([
-            dbc.Col(price_over_time_chart, xl=6, md=12, sm=12),
-            dbc.Col(candlestick_chart, xl=6, md=12, sm=12)
-        ], class_name='mb-4 align-items-stretch'),
-        dbc.Row([
-            dbc.Col(volume_filter_chart_group, xl=6, md=12, sm=12),
-            dbc.Col(tickers_filter_group, xl=6, md=12, sm=12)
-        ], class_name='align-items-stretch')
+        charts_section
+
     ], fluid=True)
 
     return layout

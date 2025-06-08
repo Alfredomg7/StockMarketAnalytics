@@ -32,10 +32,13 @@ def register_callbacks(app: Dash) -> None:
         # Handle empty portfolio
         if portfolio_df.empty:
             kpis_placeholders = ['-', '-', '-', '-']
-            empty_charts = [cmp.create_empty_chart(title='No Data', text="Please add stocks to your portfolio in 'My Portfolio' section.") for _ in range(2)]
-            return kpis_placeholders + [
-                *empty_charts
+            empty_charts = [
+                cmp.create_empty_chart(
+                    title='No Data', 
+                    text="Please add stocks to your portfolio in 'My Portfolio' section."
+                ) for _ in range(2)
             ]
+            return kpis_placeholders + empty_charts
         
         # Calculate and format KPIs
         total_value = format_currency(portfolio_df["Value"].sum())
@@ -55,18 +58,25 @@ def register_callbacks(app: Dash) -> None:
         )
         portfolio_distribution_chart.update_layout(xaxis=dict(title='Value (USD)'))
 
-        # Create sector distribution chart
-        sector_df = db.get_sector_data()
-        aggregated_df= db.aggregate_portfolio_by_sector(pl.from_pandas(portfolio_df), sector_df)
-        sector_distribution_chart = cmp.create_bar_chart(
-            data=aggregated_df,
-            x="sector",
-            y="Total Value",
-            title="Sector Allocation",
-            color=cmp.PRIMARY_COLOR,
-            show_data_labels=True,
-        )
-        sector_distribution_chart.update_layout(yaxis=dict(title='Value (USD)'))
+        # Get sector data and create sector distribution chart
+        conn = db.get_connection()
+        try:
+            sector_df = db.get_sector_data(conn)
+            aggregated_df = db.aggregate_portfolio_by_sector(
+                pl.from_pandas(portfolio_df), 
+                sector_df
+            )
+            sector_distribution_chart = cmp.create_bar_chart(
+                data=aggregated_df,
+                x="sector",
+                y="Total Value",
+                title="Sector Allocation",
+                color=cmp.PRIMARY_COLOR,
+                show_data_labels=True,
+            )
+            sector_distribution_chart.update_layout(yaxis=dict(title='Value (USD)'))
+        finally:
+            conn.close()
         
         # Prepare values to return
         kpis = [total_value, unique_stocks, avg_price, hhi]

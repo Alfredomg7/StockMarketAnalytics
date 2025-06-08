@@ -13,3 +13,6 @@ env/
 venv/
 ENV/
 VENV/
+
+# environment variables
+.env
