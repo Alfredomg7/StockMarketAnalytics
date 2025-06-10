@@ -1,9 +1,8 @@
 from dash import html
 import dash_bootstrap_components as dbc
 import components as cmp
-from services.db import get_connection, get_tickers
 
-def create_layout() -> dbc.Container:
+def create_layout(tickers: list) -> dbc.Container:
     # Header components
     title = html.H1("My Portfolio", className="text-center display-4 text-light")
     description = html.P("Customize your stocks portfolio", className="text-center opacity-75 fs-4")
@@ -29,9 +28,7 @@ def create_layout() -> dbc.Container:
     )
     
     # Get ticker options from the database
-    connection = get_connection()
-    ticker_list = get_tickers(connection)
-    ticker_options = [{"label": ticker, "value": ticker} for ticker in ticker_list]
+    ticker_options = [{"label": ticker, "value": ticker} for ticker in tickers]
 
     # Select input for stock ticker
     ticker_select = dbc.Col(

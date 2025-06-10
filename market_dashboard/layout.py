@@ -1,10 +1,10 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 import components as cmp
-from services.db import get_tickers
 import services.db as db
+from utils.google_cloud_utils import get_bigquery_client
 
-def create_layout() -> dbc.Container:
+def create_layout(tickers: list) -> dbc.Container:
     title = html.H1('Market Dashboard', className='text-center display-4 text-light')
     description = html.P(
         'Discover insights about the stock market', 
@@ -12,12 +12,7 @@ def create_layout() -> dbc.Container:
     )
 
     # Get options dictionaries for the select components
-    conn = db.get_connection() # Create a connection to the databases
-    try:
-        ticker_list = get_tickers(conn=conn)
-        ticker_options = [{'label': ticker, 'value': ticker} for ticker in ticker_list]
-    finally:
-        conn.close()
+    ticker_options = [{'label': ticker, 'value': ticker} for ticker in tickers]
 
     volume_options = [
         {'label': 'All', 'value': 'all'},

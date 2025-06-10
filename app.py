@@ -1,7 +1,9 @@
 from typing import Dict
+import os
 import dash_bootstrap_components as dbc
 from dash import Dash, dcc, html, Input, Output
 import components as cmp
+from config import CREDENTIALS_DICT, PROJECT_ID, REQUIRED_ENV_VARS
 from guide.layout import create_layout as create_guide_layout
 from market_dashboard.layout import create_layout as create_market_dashboard_layout
 from portfolio_dashboard.layout import create_layout as create_portfolio_dashboard_layout
@@ -9,8 +11,8 @@ from portfolio_form.layout import create_layout as create_portfolio_form_layout
 from market_dashboard.callbacks import register_callbacks as register_market_callbacks
 from portfolio_dashboard.callbacks import register_callbacks as register_portfolio_callbacks
 from portfolio_form.callbacks import register_callbacks as register_portfolio_form_callbacks
-from services.db import get_stocks_current_price, get_tickers
 import services.db as db
+from utils.google_cloud_utils import get_bigquery_client
 
 def create_app() -> Dash:
     # Init Dash app with bootstrap theme
@@ -51,6 +53,15 @@ def create_app() -> Dash:
         className="bg-primary text-light h-100",
     )
 
+    # Validate all required environment variables
+    for var in REQUIRED_ENV_VARS:
+        if var not in os.environ:
+            raise EnvironmentError(f"Missing required environment variable: {var}")
+
+    # Get tickers list from BigQuery
+    client = get_bigquery_client(CREDENTIALS_DICT, PROJECT_ID)
+    tickers = db.get_tickers(client)
+
     # Handle page navigation through callbacks
     @app.callback(
         Output('page-content', 'children'),
@@ -58,9 +69,9 @@ def create_app() -> Dash:
     )
     def display_page(pathname: str) -> html.Div:
         if pathname == '/':
-            return create_market_dashboard_layout()
+            return create_market_dashboard_layout(tickers)
         elif pathname == '/portfolio-form':
-            return create_portfolio_form_layout()
+            return create_portfolio_form_layout(tickers)
         elif pathname == '/portfolio-dashboard':
             return create_portfolio_dashboard_layout()
         elif pathname == '/guide':
@@ -75,17 +86,15 @@ def create_app() -> Dash:
         prevent_initial_call=True,
     )
     def fetch_prices_on_load(_) -> Dict[str, float]:
-        conn = db.get_connection()
         try:
-            tickers = db.get_tickers(conn)
             if not tickers:
                 return {}
-            prices = db.get_stocks_current_price(conn, tickers)
+            prices = db.get_stocks_current_price(client, tickers)
             return prices
         except Exception as e:
             return {"Error during fetch_prices_on_load": str(e)}
         finally:
-            conn.close()
+            client.close()
 
     register_market_callbacks(app)
     register_portfolio_callbacks(app)

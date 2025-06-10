@@ -6,16 +6,11 @@ WORKDIR $APP_HOME
 
 COPY . ./
 
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install dos2unix and convert entrypoint.sh
-RUN apt-get update && apt-get install -y dos2unix && dos2unix /app/entrypoint.sh
+# Use cache for dependencies installation
+RUN pip install -r requirements.txt
 
 # Debug step to list files
 RUN ls -la /app
 
-# Make the entrypoint script executable
-RUN chmod +x entrypoint.sh
-
-# Run the web service on container startup
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Run the app
+CMD ["gunicorn", "--bind", ":8080", "--workers", "1", "--threads", "8", "--timeout", "0", "app:server"]

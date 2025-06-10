@@ -3,7 +3,9 @@ from dash import Dash, Input, Output, ctx
 import plotly.graph_objects as go
 import components as cmp
 import services.db as db
+from config import CREDENTIALS_DICT, PROJECT_ID
 from utils.callback_utils import get_period, get_volume_range
+from utils.google_cloud_utils import get_bigquery_client
 
 def register_callbacks(app: Dash) -> None:    
     @app.callback(
@@ -36,11 +38,11 @@ def register_callbacks(app: Dash) -> None:
         ]
     )
     def update_stock_and_volume_charts(ticker: str, period: str, selected_volume_range: str) -> Tuple[go.Figure, go.Figure, go.Figure]:
-        conn = db.get_connection()
+        bigquery_client = get_bigquery_client(CREDENTIALS_DICT, PROJECT_ID)
         try:
-            price_df = db.get_price_data(conn, ticker, period)
+            price_df = db.get_price_data(bigquery_client, ticker, period)
             volume_range = get_volume_range(selected_volume_range)
-            volume_df = db.get_volume_data(conn, ticker, period, volume_range)
+            volume_df = db.get_volume_data(bigquery_client, ticker, period, volume_range)
             
             time_period_text = f'Last {period.capitalize()}' if period != 'max' else 'All Time'
             line_chart_title = f'{ticker} Closing Price - {time_period_text}'
@@ -69,7 +71,7 @@ def register_callbacks(app: Dash) -> None:
             
             return line_fig, candlestick_fig, volume_fig
         finally:
-            conn.close()
+            bigquery_client.close()
     
     @app.callback(
         Output({'type': 'dynamic-output-heatmap', 'section': 'market'}, 'figure'),
@@ -79,9 +81,9 @@ def register_callbacks(app: Dash) -> None:
         ]
     )
     def update_heatmap(tickers: List[str], period: str) -> go.Figure:
-        conn = db.get_connection()
+        client = get_bigquery_client(CREDENTIALS_DICT, PROJECT_ID)
         try:
-            corr_matrix = db.get_corr_matrix(conn, tickers, period)
+            corr_matrix = db.get_corr_matrix(client, tickers, period)
             time_period_text = f'Last {period.capitalize()}' if period != 'max' else 'All Time'
             chart_title = f'Stocks Correlation Matrix - {time_period_text}'
             if not corr_matrix.is_empty():
@@ -89,4 +91,4 @@ def register_callbacks(app: Dash) -> None:
                 return fig
             return cmp.create_empty_chart(chart_title)
         finally:
-            conn.close()
+            client.close()

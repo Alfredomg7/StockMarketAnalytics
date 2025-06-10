@@ -2,9 +2,11 @@ from io import StringIO
 from dash import Dash, Input, Output
 import pandas as pd
 import polars as pl
+from config import CREDENTIALS_DICT, PROJECT_ID
 import components as cmp
 import services.db as db
 from utils.fig_utils import format_currency, format_percent
+from utils.google_cloud_utils import get_bigquery_client
 
 def register_callbacks(app: Dash) -> None:
     @app.callback(
@@ -59,9 +61,9 @@ def register_callbacks(app: Dash) -> None:
         portfolio_distribution_chart.update_layout(xaxis=dict(title='Value (USD)'))
 
         # Get sector data and create sector distribution chart
-        conn = db.get_connection()
+        client = get_bigquery_client(CREDENTIALS_DICT, PROJECT_ID)
         try:
-            sector_df = db.get_sector_data(conn)
+            sector_df = db.get_sector_data(client)
             aggregated_df = db.aggregate_portfolio_by_sector(
                 pl.from_pandas(portfolio_df), 
                 sector_df
@@ -76,7 +78,7 @@ def register_callbacks(app: Dash) -> None:
             )
             sector_distribution_chart.update_layout(yaxis=dict(title='Value (USD)'))
         finally:
-            conn.close()
+            client.close()
         
         # Prepare values to return
         kpis = [total_value, unique_stocks, avg_price, hhi]

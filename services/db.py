@@ -1,104 +1,164 @@
 import sqlite3
 from typing import List, Dict
+from google.cloud import bigquery
 import polars as pl
-from config import DATABASE_URL
-
-def get_connection(database: str = DATABASE_URL) -> sqlite3.Connection:
-    """ Create and return a connection to the SQLite database file located at the URL provided """
-    try:
-        conn = sqlite3.connect(database)
-        return conn
-    except sqlite3.Error as e:
-        print(f"Error connecting to database: {e}")
-        return None
+from config import PROJECT_ID, DATASET_ID, STOCKS_TABLE_ID, SECTORS_TABLE_ID
  
 def get_price_data(
-    conn: sqlite3.Connection,
+    client: bigquery.Client,
     ticker: str,
     period: str = 'max'
 ) -> pl.DataFrame:
-    period_filter = '' if period == 'max' else "AND date > date('now', ?)"
+    # Define the SQL query to fetch stock price data
+    period_filter = '' if period == 'max' else "AND date > DATE_SUB(CURRENT_DATE(), INTERVAL @period_days DAY)"
+    
     query = f"""
         SELECT
             date, open, close, high, low
         FROM
-            stock_prices
+            `{PROJECT_ID}.{DATASET_ID}.{STOCKS_TABLE_ID}`
         WHERE
-            ticker = ?
+            ticker = @ticker
         {period_filter}
+        ORDER BY
+            date ASC
     """
-    query = query.format(period_filter=period_filter)
-
+    # prepare the query parameters based on the period
     try:
-        parameters = [ticker] if period == 'max' else [ticker, f'-{period}']
-        stock_data = pl.read_database(
-            query=query,
-            connection=conn,
-            execute_options={"parameters": parameters}
-        )
-        return stock_data
+        if period == 'max':
+            query_params = [
+                bigquery.ScalarQueryParameter("ticker", "STRING", ticker)
+            ]
+        else:
+            period_days = {
+                '1 month': 30,
+                '3 months': 90,
+                '6 months': 180,
+                '1 year': 365,
+                '5 years': 1825
+            }.get(period, 30)
+            
+            query_params = [
+                bigquery.ScalarQueryParameter("ticker", "STRING", ticker),
+                bigquery.ScalarQueryParameter("period_days", "INT64", period_days)
+            ]
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        
+        # Execute the query and convert the result to a Polars DataFrame
+        pandas_df = client.query(query, job_config=job_config).to_dataframe()
+        return pl.from_pandas(pandas_df)
     except Exception as e:
         print(f"Error during get_stock_data call: {e}")
         return pl.DataFrame()
 
 def get_volume_data(
-    conn: sqlite3.Connection,
+    client: bigquery.Client,
     ticker: str,
     period: str = 'max',
     volume_range: tuple = (0, 100000)
 ) -> pl.DataFrame:
-    period_filter = "" if period == 'max' else "AND date > date('now', ?)"
-    query = """
+    # Define the SQL query to fetch stock volume data
+    period_filter = '' if period == 'max' else "AND date > DATE_SUB(CURRENT_DATE(), INTERVAL @period_days DAY)"
+    
+    min_volume = volume_range[0]
+    max_volume = volume_range[1]
+    
+    # Handle infinite volume range
+    if max_volume == float('inf'):
+        volume_condition = "AND volume >= @min_volume"
+    else:
+        volume_condition = "AND volume BETWEEN @min_volume AND @max_volume"
+    
+    query = f"""
         SELECT
-            ticker, date, volume
+            date, ticker, volume
         FROM
-            stock_prices
+            `{PROJECT_ID}.{DATASET_ID}.{STOCKS_TABLE_ID}`
         WHERE
-            ticker = ?
-        {period_filter}
-        AND
-            volume BETWEEN ? AND ?
+            ticker = @ticker
+            {volume_condition}
+            {period_filter}
+        ORDER BY
+            date ASC
     """
-    query = query.format(period_filter=period_filter)
+    
     try:
-        if period == 'max':
-            parameters = [ticker, volume_range[0], volume_range[1]]
-        else:
-            parameters = [ticker, f'-{period}', volume_range[0], volume_range[1]]
-        stock_data = pl.read_database(
-            query=query,
-            connection=conn,
-            execute_options={"parameters": parameters}
-        )
-        return stock_data
+        # Prepare the query parameters
+        query_params = [
+            bigquery.ScalarQueryParameter("ticker", "STRING", ticker),
+            bigquery.ScalarQueryParameter("min_volume", "INT64", min_volume)
+        ]
+        
+        # Add max_volume parameter if it is not infinite
+        if max_volume != float('inf'):
+            query_params.append(
+                bigquery.ScalarQueryParameter("max_volume", "INT64", max_volume)
+            )
+        
+        # Add period_days parameter when needed
+        if period != 'max':
+            period_days = {
+                '1 month': 30,
+                '3 months': 90,
+                '6 months': 180,
+                '1 year': 365,
+                '5 years': 1825
+            }.get(period, 30)
+            
+            query_params.append(
+                bigquery.ScalarQueryParameter("period_days", "INT64", period_days)
+            )
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        
+        # Execute the query and convert the result to a Polars DataFrame
+        pandas_df = client.query(query, job_config=job_config).to_dataframe()
+        return pl.from_pandas(pandas_df)
     except Exception as e:
         print(f"Error during get_volume_data call: {e}")
         return pl.DataFrame()
-
+    
 def get_corr_matrix(
-    conn: sqlite3.Connection,
-    tickers: list,
+    client: bigquery.Client,
+    tickers: List[str],
     period: str = 'max'
 ) -> pl.DataFrame:
-    ticker_placeholders = ', '.join(['?' for _ in tickers])
-    period_filter = '' if period == 'max' else "AND date > date('now', ?)"
+    ticker_placeholders = ', '.join([f"'{ticker}'" for ticker in tickers])
+    period_filter = '' if period == 'max' else "AND date > DATE_SUB(CURRENT_DATE(), INTERVAL @period_days DAY)"
+    
     query = f"""
-            SELECT
-                ticker, date, close
-            FROM
-                stock_prices
-            WHERE
-                ticker IN ({ticker_placeholders})
+        SELECT
+            ticker, date, MAX(close) AS close
+        FROM
+            `{PROJECT_ID}.{DATASET_ID}.{STOCKS_TABLE_ID}`
+        WHERE
+            ticker IN ({ticker_placeholders})
             {period_filter}
-        """
-    query = query.format(period_filter=period_filter)
+        GROUP BY
+            ticker, date
+        ORDER BY
+            date ASC
+    """
+    
     try:
-        parameters = tickers if period == 'max' else tickers + [f'-{period}']
-        stock_data = pl.read_database(
-            query=query,
-            connection=conn,
-            execute_options={"parameters": parameters}
-        )
+        query_params = []
+        if period != 'max':
+            period_days = {
+                '1 month': 30,
+                '3 months': 90,
+                '6 months': 180,
+                '1 year': 365,
+                '5 years': 1825
+            }.get(period, 30)
+            query_params.append(
+                bigquery.ScalarQueryParameter("period_days", "INT64", period_days)
+            )
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        pandas_df = client.query(query, job_config=job_config).to_dataframe()
+        
+        stock_data = pl.from_pandas(pandas_df)
         if stock_data.is_empty():
             return pl.DataFrame()
         
@@ -107,63 +167,66 @@ def get_corr_matrix(
             index='date',
             columns='ticker'
         )
-        min_date = pivoted_data.drop_nulls().select('date').min()
-        max_date = pivoted_data.drop_nulls().select('date').max()
-        pivoted_data = pivoted_data.filter(
-            (pl.col("date") >= min_date) & (pl.col("date") <= max_date)
-        )
         numeric_data = pivoted_data.drop("date")
         corr_matrix = numeric_data.corr()
         return corr_matrix
     except Exception as e:
-        print(f"Error during get_corr_matrix call: {e}")
+        print(f"Error during get_corr_matrix_bigquery call: {e}")
         return pl.DataFrame()
 
-def get_tickers(conn: sqlite3.Connection) -> List[str]:
-    query = "SELECT DISTINCT ticker FROM stock_sector ORDER BY ticker"
+def get_tickers(client: bigquery.Client) -> List[str]:
+    query = f"""
+        SELECT DISTINCT ticker
+        FROM `{PROJECT_ID}.{DATASET_ID}.{SECTORS_TABLE_ID}`
+        ORDER BY ticker
+    """
     try:
-        tickers = pl.read_database(query=query, connection=conn)
-        return tickers['ticker'].to_list()
+        pandas_df = client.query(query).to_dataframe()
+        return pandas_df['ticker'].tolist()
     except Exception as e:
         print(f"Error during get_tickers call: {e}")
         return ['NA']
 
 def get_stocks_current_price(
-    conn: sqlite3.Connection,
+    client: bigquery.Client,
     tickers: List[str]
 ) -> Dict[str, float]:
-    query = """
+    ticker_placeholders = ', '.join([f"'{ticker}'" for ticker in tickers])
+    query = f"""
         SELECT
             ticker, close
         FROM
-            stock_prices
+            `{PROJECT_ID}.{DATASET_ID}.{STOCKS_TABLE_ID}`
         WHERE
-            date = (SELECT MAX(date) FROM stock_prices)
+            date = (SELECT MAX(date) FROM `{PROJECT_ID}.{DATASET_ID}.{STOCKS_TABLE_ID}`)
         AND
             ticker IN ({ticker_placeholders})
     """
-    ticker_placeholders = ', '.join(['?' for _ in tickers])
-    query = query.format(ticker_placeholders=ticker_placeholders)
     try:
-        stock_data = pl.read_database(
-            query=query,
-            connection=conn,
-            execute_options={"parameters": tickers}
-        )
-        return dict(zip(stock_data["ticker"], stock_data["close"]))
+        pandas_df = client.query(query).to_dataframe()
+        return dict(zip(pandas_df["ticker"], pandas_df["close"]))
     except Exception as e:
         print(f"Error during get_stocks_current_price call: {e}")
         return {}
 
-def get_sector_data(conn: sqlite3.Connection) -> pl.DataFrame:
-    query = "SELECT * FROM stock_sector"
+def get_sector_data(client: bigquery.Client) -> pl.DataFrame:
+    # Define the SQL query to fetch sector data
+    query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{DATASET_ID}.{SECTORS_TABLE_ID}`
+    """
+    
     try:
-        sector_data = pl.read_database(query=query, connection=conn)
-        return sector_data
+        # Set up the query job configuration
+        job_config = bigquery.QueryJobConfig()
+        
+        # Execute the query and convert the result to a Polars DataFrame
+        pandas_df = client.query(query, job_config=job_config).to_dataframe()
+        return pl.from_pandas(pandas_df)
     except Exception as e:
         print(f"Error during get_sector_data call: {e}")
         return pl.DataFrame()
-
+    
 def aggregate_portfolio_by_sector(portfolio_data: pl.DataFrame, sector_data: pl.DataFrame) -> pl.DataFrame:
     try:
         merged_data = portfolio_data.join(
